@@ -200,6 +200,75 @@ def run_tests() -> dict:
     }
 
 @mcp.tool
+def run_linter() -> dict:
+    """Run ruff against the synced target project."""
+    if not project_root.exists():
+        return {
+            "ok": False,
+            "message": "PROJECT_ROOT not found. Run sync_target_repo first.",
+            "project_root": str(project_root)
+        }
+
+    return {
+        "project_root": str(project_root),
+        **_run_command([sys.executable, "-m", "ruff", "check", "."], cwd=project_root, timeout=120)
+    }
+
+SUSPICIOUS_SECRET_PATTERNS = [
+    "api_key",
+    "secret_key",
+    "access_key",
+    "private_key",
+    "bearer ",
+    "sk-",
+    "aws_secret_access_key",
+    "password=",
+    "token="
+]
+
+@mcp.tool
+def run_secret_scan() -> dict:
+    """Scan the synced target project for suspicious hardcoded secret patterns."""
+    if not project_root.exists():
+        return {
+            "ok": False,
+            "message": "PROJECT_ROOT not found. Run sync_target_repo first.",
+            "project_root": str(project_root)
+        }
+
+    matches = []
+
+    for path in project_root.rglob("*"):
+        if not path.is_file():
+            continue
+
+        if any(part.startswith(".venv") for part in path.parts):
+            continue
+
+        if path.suffix in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".lock"}:
+            continue
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+
+        lower_text = text.lower()
+        for pattern in SUSPICIOUS_SECRET_PATTERNS:
+            if pattern in lower_text:
+                matches.append({
+                    "file": str(path.relative_to(project_root)),
+                    "pattern": pattern
+                })
+
+    return {
+        "ok": len(matches) == 0,
+        "project_root": str(project_root),
+        "matches": matches,
+        "message": "No suspicious secret patterns found" if not matches else "Suspicious secret patterns detected"
+    }
+
+@mcp.tool
 def validate_patch_scope(files: list[str]) -> dict:
     """Validate whether a proposed patch only touches approved files."""
     allowed = []
