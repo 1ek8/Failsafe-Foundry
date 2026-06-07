@@ -3,6 +3,10 @@ from pathlib import Path
 import subprocess
 import os
 import shutil
+import tempfile
+import zipfile
+import io
+import urllib.request
 
 ALLOWED_PATCH_PREFIXES = [
     "app/routes/",
@@ -28,6 +32,12 @@ target_repo_branch = os.environ.get("TARGET_REPO_BRANCH", "main").strip()
 project_root = Path(os.environ.get("PROJECT_ROOT", "/tmp/apicrate")).resolve()
 
 mcp = FastMCP("failsafe-validation-tools")
+
+def _github_zip_url(repo_url: str, branch: str) -> str:
+    normalized = repo_url.rstrip("/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return f"{normalized}/archive/refs/heads/{branch}.zip"
 
 def _run_command(command: list[str], cwd: Path | None = None, timeout: int = 60) -> dict:
     try:
@@ -64,7 +74,7 @@ def ping() -> dict:
 
 @mcp.tool
 def sync_target_repo() -> dict:
-    """Clone or refresh the target GitHub repo into the local working directory."""
+    """Download and refresh the target GitHub repo into the local working directory."""
     if not target_repo_url:
         return {
             "ok": False,
@@ -72,32 +82,54 @@ def sync_target_repo() -> dict:
             "project_root": str(project_root)
         }
 
+    zip_url = _github_zip_url(target_repo_url, target_repo_branch)
     parent_dir = project_root.parent
     parent_dir.mkdir(parents=True, exist_ok=True)
 
     if project_root.exists():
         shutil.rmtree(project_root)
 
-    clone_result = _run_command(
-        ["git", "clone", "--depth", "1", "--branch", target_repo_branch, target_repo_url, str(project_root)],
-        timeout=120
-    )
+    temp_extract_dir = Path(tempfile.mkdtemp(prefix="apicrate_extract_"))
 
-    if not clone_result["ok"]:
+    try:
+        with urllib.request.urlopen(zip_url, timeout=60) as response:
+            data = response.read()
+
+        with zipfile.ZipFile(io.BytesIO(data)) as zip_ref:
+            zip_ref.extractall(temp_extract_dir)
+
+        extracted_dirs = [p for p in temp_extract_dir.iterdir() if p.is_dir()]
+        if not extracted_dirs:
+            return {
+                "ok": False,
+                "message": "Downloaded archive did not contain an extracted repository directory",
+                "zip_url": zip_url
+            }
+
+        extracted_repo_dir = extracted_dirs[0]
+        shutil.move(str(extracted_repo_dir), str(project_root))
+
         return {
-            "ok": False,
-            "message": "Failed to clone target repo",
+            "ok": True,
+            "message": "Target repo synced successfully from GitHub archive",
             "project_root": str(project_root),
-            "details": clone_result
+            "repo_url": target_repo_url,
+            "branch": target_repo_branch,
+            "zip_url": zip_url
         }
 
-    return {
-        "ok": True,
-        "message": "Target repo synced successfully",
-        "project_root": str(project_root),
-        "repo_url": target_repo_url,
-        "branch": target_repo_branch
-    }
+    except Exception as e:
+        return {
+            "ok": False,
+            "message": "Failed to download or extract target repo archive",
+            "project_root": str(project_root),
+            "zip_url": zip_url,
+            "error": str(e)
+        }
+
+    finally:
+        if temp_extract_dir.exists():
+            shutil.rmtree(temp_extract_dir, ignore_errors=True)
 
 
 @mcp.tool
@@ -110,8 +142,8 @@ def list_project_files() -> list[str]:
 
 @mcp.tool
 def run_tests() -> dict:
-    """Run pytest in the target project."""
-    if not PROJECT_ROOT.exists():
+    """Run pytest in the synced target project."""
+    if not project_root.exists():
         return {
             "ok": False, 
             "message": "PROJECT_ROOT not found. Run sync_target_repo first.",
