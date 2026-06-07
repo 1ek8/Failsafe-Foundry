@@ -1,4 +1,5 @@
 fastapi
+fastmcp
 uvicorn
 pytest
 httpx
