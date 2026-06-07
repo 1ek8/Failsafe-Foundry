@@ -2,6 +2,7 @@ from fastmcp import FastMCP
 from pathlib import Path
 import subprocess
 import os
+import shutil
 
 ALLOWED_PATCH_PREFIXES = [
     "app/routes/",
@@ -22,16 +23,80 @@ BLOCKED_PATCH_PREFIXES = [
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/app/target")).resolve()
 port = int(os.environ.get("PORT", "8000"))
+target_repo_url = os.environ.get("TARGET_REPO_URL", "").strip()
+target_repo_branch = os.environ.get("TARGET_REPO_BRANCH", "main").strip()
+project_root = Path(os.environ.get("PROJECT_ROOT", "/tmp/apicrate")).resolve()
 
 mcp = FastMCP("failsafe-validation-tools")
 
+def _run_command(command: list[str], cwd: Path | None = None, timeout: int = 60) -> dict:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        return {
+            "ok": result.returncode == 0,
+            "returncode": result.returncode,
+            "stdout": result.stdout[-4000:],
+            "stderr": result.stderr[-4000:]
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(e)
+        }
 
 @mcp.tool
 def ping() -> dict:
     """Health check."""
     return {
         "status": "ok",
-        "project_root": str(PROJECT_ROOT)
+        "project_root": str(PROJECT_ROOT),
+        "target_repo_url": target_repo_url,
+        "target_repo_branch": target_repo_branch
+    }
+
+@mcp.tool
+def sync_target_repo() -> dict:
+    """Clone or refresh the target GitHub repo into the local working directory."""
+    if not target_repo_url:
+        return {
+            "ok": False,
+            "message": "TARGET_REPO_URL is not configured",
+            "project_root": str(project_root)
+        }
+
+    parent_dir = project_root.parent
+    parent_dir.mkdir(parents=True, exist_ok=True)
+
+    if project_root.exists():
+        shutil.rmtree(project_root)
+
+    clone_result = _run_command(
+        ["git", "clone", "--depth", "1", "--branch", target_repo_branch, target_repo_url, str(project_root)],
+        timeout=120
+    )
+
+    if not clone_result["ok"]:
+        return {
+            "ok": False,
+            "message": "Failed to clone target repo",
+            "project_root": str(project_root),
+            "details": clone_result
+        }
+
+    return {
+        "ok": True,
+        "message": "Target repo synced successfully",
+        "project_root": str(project_root),
+        "repo_url": target_repo_url,
+        "branch": target_repo_branch
     }
 
 
@@ -47,23 +112,16 @@ def list_project_files() -> list[str]:
 def run_tests() -> dict:
     """Run pytest in the target project."""
     if not PROJECT_ROOT.exists():
-        return {"ok": False, "error": f"PROJECT_ROOT not found: {PROJECT_ROOT}"}
-    try:
-        result = subprocess.run(
-            ["pytest", "-q"],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
         return {
-            "ok": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout[-4000:],
-            "stderr": result.stderr[-4000:]
-        }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+            "ok": False, 
+            "message": "PROJECT_ROOT not found. Run sync_target_repo first.",
+            "project_root": str(project_root)
+            }
+    
+    return {
+        "project_root": str(project_root),
+        **_run_command(["pytest", "-q"], cwd=project_root, timeout=120)
+    }
 
 @mcp.tool
 def validate_patch_scope(files: list[str]) -> dict:
@@ -94,9 +152,9 @@ def validate_patch_scope(files: list[str]) -> dict:
 
     return {
         "ok": ok,
-        "allowed_files": allowed,
-        "blocked_files": blocked,
-        "unknown_files": unknown,
+        "allowed_files": sorted(set(allowed)),
+        "blocked_files": sorted(set(blocked)),
+        "unknown_files": sorted(set(unknown)),
         "allowed_prefixes": ALLOWED_PATCH_PREFIXES,
         "blocked_prefixes": BLOCKED_PATCH_PREFIXES,
         "message": (
