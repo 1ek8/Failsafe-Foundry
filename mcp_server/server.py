@@ -4,6 +4,7 @@ import subprocess
 import os
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/app/target")).resolve()
+port = int(os.environ.get("PORT", "8000"))
 
 mcp = FastMCP("failsafe-validation-tools")
 
@@ -49,4 +50,4 @@ def run_tests() -> dict:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="http", host="0.0.0.0", port=8000)
+    mcp.run(transport="http", host="0.0.0.0", port=port)
