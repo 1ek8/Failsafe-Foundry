@@ -7,6 +7,7 @@ import tempfile
 import zipfile
 import io
 import urllib.request
+import sys
 
 ALLOWED_PATCH_PREFIXES = [
     "app/routes/",
@@ -139,6 +140,49 @@ def list_project_files() -> list[str]:
         return [f"PROJECT_ROOT not found: {PROJECT_ROOT}"]
     return sorted([p.name for p in PROJECT_ROOT.iterdir()])
 
+@mcp.tool
+def install_project_dependencies() -> dict:
+    """Install Python dependencies for the synced target project."""
+    if not project_root.exists():
+        return {
+            "ok": False,
+            "message": "PROJECT_ROOT not found. Run sync_target_repo first.",
+            "project_root": str(project_root)
+        }
+
+    requirements_file = project_root / "requirements.txt"
+    if not requirements_file.exists():
+        return {
+            "ok": False,
+            "message": "requirements.txt not found in target project",
+            "project_root": str(project_root),
+            "requirements_file": str(requirements_file)
+        }
+
+    marker_file = project_root / ".deps_installed"
+
+    if marker_file.exists():
+        return {
+            "ok": True,
+            "message": "Dependencies already installed",
+            "project_root": str(project_root),
+            "requirements_file": str(requirements_file)
+        }
+
+    result = _run_command(
+        [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
+        cwd=project_root,
+        timeout=300
+    )
+
+    if result["ok"]:
+        marker_file.write_text("installed\n")
+
+    return {
+        "project_root": str(project_root),
+        "requirements_file": str(requirements_file),
+        **result
+    }
 
 @mcp.tool
 def run_tests() -> dict:
