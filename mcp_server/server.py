@@ -31,7 +31,6 @@ port = int(os.environ.get("PORT", "8000"))
 target_repo_url = os.environ.get("TARGET_REPO_URL", "").strip()
 target_repo_branch = os.environ.get("TARGET_REPO_BRANCH", "main").strip()
 project_root = Path(os.environ.get("PROJECT_ROOT", "/tmp/apicrate")).resolve()
-TARGET_REPO_DIR = Path(os.environ.get("TARGET_REPO_DIR", "./workspace/apicrate")).resolve()
 
 mcp = FastMCP("failsafe-validation-tools")
 
@@ -308,49 +307,4 @@ def validate_patch_scope(files: list[str]) -> dict:
             if ok
             else "Patch scope rejected because some files are blocked or outside the approved scope"
         ),
-    }
-
-@mcp.tool
-def apply_patch_dry_run(files: list[dict]) -> dict:
-    baseline = TARGET_REPO_DIR
-    if not baseline.exists():
-        return {
-            "ok": False,
-            "message": f"Baseline repository does not exist: {baseline}",
-        }
-
-    temp_root = Path(tempfile.mkdtemp(prefix="failsafe-dryrun-"))
-    workspace = temp_root / "repo"
-    shutil.copytree(baseline, workspace)
-
-    written_files = []
-    violations = []
-
-    for item in files:
-        path = item.get("path")
-        content = item.get("content", "")
-
-        if not path:
-            violations.append("Missing file path in patch draft item.")
-            continue
-
-        normalized = path.replace("\\", "/").lstrip("./")
-
-        if ".." in Path(normalized).parts:
-            violations.append(f"Parent traversal not allowed: {normalized}")
-            continue
-
-        dest = workspace / normalized
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-        written_files.append(normalized)
-
-    ok = len(violations) == 0
-
-    return {
-        "ok": ok,
-        "message": "Dry-run patch applied." if ok else "Dry-run patch application had violations.",
-        "workspace": str(workspace),
-        "written_files": written_files,
-        "violations": violations,
     }
