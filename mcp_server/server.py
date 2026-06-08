@@ -308,3 +308,24 @@ def validate_patch_scope(files: list[str]) -> dict:
             else "Patch scope rejected because some files are blocked or outside the approved scope"
         ),
     }
+
+@mcp.tool
+def apply_patch_dry_run(files: list[dict]) -> dict:
+
+    workspace = Path(tempfile.mkdtemp(prefix="failsafe-dryrun-"))
+    written = []
+
+    for item in files:
+        path = workspace / item["path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(item["content"], encoding="utf-8")
+        written.append(item["path"])
+
+    return {
+        "ok": True,
+        "workspace": str(workspace),
+        "written_files": written,
+    }
+
+if __name__ == "__main__":
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
