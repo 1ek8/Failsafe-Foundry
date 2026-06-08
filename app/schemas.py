@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
@@ -35,5 +35,6 @@ class PipelineReport(BaseModel):
     outcome: str
     reasons: List[str]
     patch_plan: PatchPlan
+    patch_draft: Optional[PatchDraft] = None
     tool_results: List[ToolResult]
     release_note: str

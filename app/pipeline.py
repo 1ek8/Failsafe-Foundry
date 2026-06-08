@@ -57,7 +57,11 @@ def extract_ok(payload: dict) -> bool:
     if isinstance(structured, dict):
         if "ok" in structured:
             return bool(structured["ok"])
-        if "result" in structured and isinstance(structured["result"], dict) and "ok" in structured["result"]:
+        if (
+            "result" in structured
+            and isinstance(structured["result"], dict)
+            and "ok" in structured["result"]
+        ):
             return bool(structured["result"]["ok"])
 
     content = payload.get("content")
@@ -109,7 +113,9 @@ def summarize_payload(payload: dict) -> str:
 def review_patch_plan(ticket: FeatureTicket, patch_plan: PatchPlan) -> tuple[bool, list[str]]:
     reasons = []
 
-    text = f"{ticket.title}\n{ticket.summary}\n{patch_plan.summary}\n" + "\n".join(patch_plan.risk_notes)
+    text = f"{ticket.title}\n{ticket.summary}\n{patch_plan.summary}\n" + "\n".join(
+        patch_plan.risk_notes
+    )
     lower = text.lower()
     files = [f.lower() for f in patch_plan.files_to_touch]
 
@@ -189,20 +195,55 @@ Important:
 """.strip()
 
 
+def extract_workspace(payload: dict):
+    if not isinstance(payload, dict):
+        return None
+
+    workspace = payload.get("workspace")
+    if workspace:
+        return workspace
+
+    structured = payload.get("structuredContent")
+    if isinstance(structured, dict):
+        workspace = structured.get("workspace")
+        if workspace:
+            return workspace
+
+        nested_result = structured.get("result")
+        if isinstance(nested_result, dict):
+            workspace = nested_result.get("workspace")
+            if workspace:
+                return workspace
+
+    result = payload.get("result")
+    if isinstance(result, dict):
+        workspace = result.get("workspace")
+        if workspace:
+            return workspace
+
+    return None
+
+
 def build_report(ticket: FeatureTicket) -> PipelineReport:
     tool_results = []
 
     sync_payload = normalize_tool_payload(call_mcp_tool("sync_target_repo", {}))
     sync_ok = extract_ok(sync_payload)
-    tool_results.append(ToolResult(name="sync_target_repo", ok=sync_ok, payload=sync_payload))
+    tool_results.append(
+        ToolResult(name="sync_target_repo", ok=sync_ok, payload=sync_payload)
+    )
 
     deps_payload = normalize_tool_payload(call_mcp_tool("install_project_dependencies", {}))
     deps_ok = extract_ok(deps_payload)
-    tool_results.append(ToolResult(name="install_project_dependencies", ok=deps_ok, payload=deps_payload))
+    tool_results.append(
+        ToolResult(name="install_project_dependencies", ok=deps_ok, payload=deps_payload)
+    )
 
     files_payload = normalize_tool_payload(call_mcp_tool("list_project_files", {}))
     files_ok = extract_ok(files_payload) or True
-    tool_results.append(ToolResult(name="list_project_files", ok=files_ok, payload=files_payload))
+    tool_results.append(
+        ToolResult(name="list_project_files", ok=files_ok, payload=files_payload)
+    )
 
     repo_context = build_repo_context(files_payload)
 
@@ -213,20 +254,23 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
     patch_plan = PatchPlan(**plan_data)
     plan_ok, plan_review_reasons = review_patch_plan(ticket, patch_plan)
 
+    patch_draft = None
+    scope_ok = False
+    draft_ok = False
+    apply_ok = False
+    lint_ok = False
+    secrets_ok = False
+    tests_ok = False
+
     if not plan_ok:
         scope_payload = {
             "structuredContent": {
                 "message": "Skipped because policy review failed before scope validation."
             }
         }
-        scope_ok = False
-        draft_ok = False
-        apply_ok = False
-        lint_ok = False
-        secrets_ok = False
-        tests_ok = False
-
-        tool_results.append(ToolResult(name="validate_patch_scope", ok=False, payload=scope_payload))
+        tool_results.append(
+            ToolResult(name="validate_patch_scope", ok=False, payload=scope_payload)
+        )
         tool_results.append(
             ToolResult(
                 name="generate_patch_draft",
@@ -262,23 +306,17 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
                 payload={"structuredContent": {"message": "Skipped because policy review failed."}},
             )
         )
-        patch_draft = None
 
     else:
         scope_payload = normalize_tool_payload(
             call_mcp_tool("validate_patch_scope", {"files": patch_plan.files_to_touch})
         )
         scope_ok = extract_ok(scope_payload)
-        tool_results.append(ToolResult(name="validate_patch_scope", ok=scope_ok, payload=scope_payload))
+        tool_results.append(
+            ToolResult(name="validate_patch_scope", ok=scope_ok, payload=scope_payload)
+        )
 
         if not scope_ok:
-            draft_ok = False
-            apply_ok = False
-            lint_ok = False
-            secrets_ok = False
-            tests_ok = False
-            patch_draft = None
-
             tool_results.append(
                 ToolResult(
                     name="generate_patch_draft",
@@ -323,6 +361,7 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
             )
             patch_draft = PatchDraft(**draft_data)
             draft_ok = len(patch_draft.files) > 0
+
             tool_results.append(
                 ToolResult(
                     name="generate_patch_draft",
@@ -332,11 +371,6 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
             )
 
             if not draft_ok:
-                apply_ok = False
-                lint_ok = False
-                secrets_ok = False
-                tests_ok = False
-
                 tool_results.append(
                     ToolResult(
                         name="apply_patch_dry_run",
@@ -378,22 +412,9 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
                     ToolResult(name="apply_patch_dry_run", ok=apply_ok, payload=apply_payload)
                 )
 
-                workspace = None
-                structured = apply_payload.get("structuredContent")
-                if isinstance(structured, dict):
-                    workspace = structured.get("workspace")
-                    if not workspace and isinstance(structured.get("result"), dict):
-                        workspace = structured["result"].get("workspace")
-                if not workspace and isinstance(apply_payload.get("result"), dict):
-                    workspace = apply_payload["result"].get("workspace")
-                if not workspace:
-                    workspace = apply_payload.get("workspace")
+                workspace = extract_workspace(apply_payload)
 
                 if not apply_ok or not workspace:
-                    lint_ok = False
-                    secrets_ok = False
-                    tests_ok = False
-
                     tool_results.append(
                         ToolResult(
                             name="run_linter",
@@ -415,7 +436,6 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
                             payload={"structuredContent": {"message": "Skipped because dry-run patch application failed."}},
                         )
                     )
-
                 else:
                     dryrun_deps_payload = normalize_tool_payload(
                         call_mcp_tool("install_project_dependencies", {"workspace": workspace})
@@ -433,19 +453,25 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
                         call_mcp_tool("run_linter", {"workspace": workspace})
                     )
                     lint_ok = extract_ok(lint_payload)
-                    tool_results.append(ToolResult(name="run_linter", ok=lint_ok, payload=lint_payload))
+                    tool_results.append(
+                        ToolResult(name="run_linter", ok=lint_ok, payload=lint_payload)
+                    )
 
                     secrets_payload = normalize_tool_payload(
                         call_mcp_tool("run_secret_scan", {"workspace": workspace})
                     )
                     secrets_ok = extract_ok(secrets_payload)
-                    tool_results.append(ToolResult(name="run_secret_scan", ok=secrets_ok, payload=secrets_payload))
+                    tool_results.append(
+                        ToolResult(name="run_secret_scan", ok=secrets_ok, payload=secrets_payload)
+                    )
 
                     tests_payload = normalize_tool_payload(
                         call_mcp_tool("run_tests", {"workspace": workspace})
                     )
                     tests_ok = extract_ok(tests_payload)
-                    tool_results.append(ToolResult(name="run_tests", ok=tests_ok, payload=tests_payload))
+                    tool_results.append(
+                        ToolResult(name="run_tests", ok=tests_ok, payload=tests_payload)
+                    )
 
                     if not dryrun_deps_ok:
                         lint_ok = False
@@ -506,6 +532,7 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
         outcome=outcome,
         reasons=reasons,
         patch_plan=patch_plan,
+        patch_draft=patch_draft,
         tool_results=tool_results,
         release_note=release_note,
     )
