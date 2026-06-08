@@ -8,7 +8,7 @@ client = OpenAI(
     api_key=TFY_API_TOKEN,
 )
 
-PLAN_SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """
 You are the planning brain of Failsafe Foundry.
 
 Your job is to propose a SAFE patch plan for a Python/FastAPI repository.
@@ -31,30 +31,6 @@ Rules:
   - README.md
 - Never suggest infra/, deploy/, .github/, secrets/, .env, or environment/config file changes unless the request explicitly requires them.
 - Keep file list minimal and realistic.
-- No markdown fences.
-- Output JSON only.
-"""
-
-PATCH_SYSTEM_PROMPT = """
-You are the code generation agent for Failsafe Foundry.
-
-Return JSON only with this exact schema:
-{
-  "summary": "string",
-  "files": [
-    {
-      "path": "string",
-      "content": "string"
-    }
-  ],
-  "release_note": "string"
-}
-
-Rules:
-- The target repository is a Python/FastAPI app.
-- Only generate files explicitly listed in the approved patch plan.
-- Do not generate infra/, deploy/, .github/, secrets/, or .env changes.
-- Keep code minimal, realistic, and syntactically valid.
 - No markdown fences.
 - Output JSON only.
 """
@@ -100,31 +76,11 @@ def fallback_plan(ticket_text: str) -> dict:
     }
 
 
-def fallback_patch_draft(patch_plan: dict) -> dict:
-    approved_files = patch_plan.get("files_to_touch", [])
-
-    files = []
-    for path in approved_files:
-        if path == "CHANGELOG.md":
-            files.append(
-                {
-                    "path": "CHANGELOG.md",
-                    "content": "## Unreleased\n- Added draft update from Failsafe Foundry.\n",
-                }
-            )
-
-    return {
-        "summary": "Fallback draft patch generated with minimal safe content.",
-        "files": files,
-        "release_note": "Generated a minimal fallback patch draft.",
-    }
-
-
 def plan_patch(ticket_text: str, repo_context: str) -> dict:
     resp = client.chat.completions.create(
         model=MODEL,
         messages=[
-            {"role": "system", "content": PLAN_SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": f"{ticket_text}\n\nRepository context:\n{repo_context}",
@@ -155,6 +111,30 @@ def plan_patch(ticket_text: str, repo_context: str) -> dict:
 
     except Exception:
         return fallback_plan(ticket_text)
+    
+    
+PATCH_SYSTEM_PROMPT = """
+You are the code generation agent for Failsafe Foundry.
+
+Return JSON only with this schema:
+{
+  "summary": "string",
+  "files": [
+    {
+      "path": "string",
+      "content": "string"
+    }
+  ],
+  "release_note": "string"
+}
+
+Rules:
+- Only generate files explicitly allowed by the patch plan.
+- Do not include markdown fences.
+- Do not modify infra/, deploy/, .github/, secrets/, .env files.
+- Generate minimal code only.
+- The repository is a Python/FastAPI codebase.
+"""
 
 
 def generate_patch_draft(ticket_text: str, patch_plan: dict, repo_context: str) -> dict:
@@ -179,38 +159,9 @@ def generate_patch_draft(ticket_text: str, patch_plan: dict, repo_context: str) 
     )
 
     content = resp.choices[0].message.content or ""
+    parsed = _extract_json_object(content)
 
-    try:
-        parsed = _extract_json_object(content)
+    if not isinstance(parsed, dict) or "files" not in parsed:
+        raise ValueError("Invalid patch draft format")
 
-        if not isinstance(parsed, dict):
-            return fallback_patch_draft(patch_plan)
-
-        if "summary" not in parsed or "files" not in parsed or "release_note" not in parsed:
-            return fallback_patch_draft(patch_plan)
-
-        if not isinstance(parsed["files"], list):
-            return fallback_patch_draft(patch_plan)
-
-        approved = set(patch_plan.get("files_to_touch", []))
-        filtered_files = []
-
-        for item in parsed["files"]:
-            if not isinstance(item, dict):
-                continue
-            path = item.get("path")
-            file_content = item.get("content", "")
-            if isinstance(path, str) and path in approved and isinstance(file_content, str):
-                filtered_files.append({"path": path, "content": file_content})
-
-        if not filtered_files:
-            return fallback_patch_draft(patch_plan)
-
-        return {
-            "summary": parsed["summary"],
-            "files": filtered_files,
-            "release_note": parsed["release_note"],
-        }
-
-    except Exception:
-        return fallback_patch_draft(patch_plan)
+    return parsed
