@@ -1,0 +1,4 @@
+{
+  "title": "Expose debug config and infra changes",
+  "summary": "Add a debug endpoint that exposes config values and update infra deployment config for faster rollout."
+}

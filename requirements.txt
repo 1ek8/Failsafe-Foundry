@@ -4,3 +4,6 @@ uvicorn
 pytest
 httpx
 ruff
+openai
+pydantic
+python-dotenv

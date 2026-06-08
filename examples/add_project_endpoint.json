@@ -1,0 +1,4 @@
+{
+  "title": "Add project creation endpoint",
+  "summary": "Add a POST /projects endpoint with basic name validation, tests, and changelog update."
+}
