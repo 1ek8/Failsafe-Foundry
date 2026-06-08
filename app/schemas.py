@@ -26,3 +26,12 @@ class PipelineReport(BaseModel):
     patch_plan: PatchPlan
     tool_results: List[ToolResult]
     release_note: str
+
+class GeneratedFile(BaseModel):
+    path: str
+    content: str
+
+class PatchDraft(BaseModel):
+    summary: str
+    files: List[GeneratedFile]
+    release_note: str

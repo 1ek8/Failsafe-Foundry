@@ -1,7 +1,7 @@
 from pathlib import Path
 from app.mcp_client import call_mcp_tool
-from app.agent_client import plan_patch
-from app.schemas import FeatureTicket, PatchPlan, ToolResult, PipelineReport
+from app.agent_client import plan_patch, generate_patch_draft
+from app.schemas import FeatureTicket, PatchPlan, ToolResult, PipelineReport, PatchDraft
 from app.reporter import render_markdown_report
 
 
@@ -247,6 +247,26 @@ def build_report(ticket: FeatureTicket) -> PipelineReport:
         )
 
         if scope_ok:
+
+            draft_data = generate_patch_draft(
+                ticket_text=f"Title: {ticket.title}\nSummary: {ticket.summary}",
+                patch_plan=patch_plan.model_dump(),
+                repo_context=repo_context,
+            )
+            patch_draft = PatchDraft(**draft_data)
+
+            apply_payload = normalize_tool_payload(
+                call_mcp_tool(
+                    "apply_patch_dry_run",
+                    {"files": [f.model_dump() for f in patch_draft.files]},
+                )
+            )
+            apply_ok = extract_ok(apply_payload)
+
+            tool_results.append(
+                ToolResult(name="apply_patch_dry_run", ok=apply_ok, payload=apply_payload)
+            )
+
             lint_payload = normalize_tool_payload(call_mcp_tool("run_linter", {}))
             lint_ok = extract_ok(lint_payload)
             tool_results.append(

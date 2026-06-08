@@ -111,3 +111,57 @@ def plan_patch(ticket_text: str, repo_context: str) -> dict:
 
     except Exception:
         return fallback_plan(ticket_text)
+    
+    
+PATCH_SYSTEM_PROMPT = """
+You are the code generation agent for Failsafe Foundry.
+
+Return JSON only with this schema:
+{
+  "summary": "string",
+  "files": [
+    {
+      "path": "string",
+      "content": "string"
+    }
+  ],
+  "release_note": "string"
+}
+
+Rules:
+- Only generate files explicitly allowed by the patch plan.
+- Do not include markdown fences.
+- Do not modify infra/, deploy/, .github/, secrets/, .env files.
+- Generate minimal code only.
+- The repository is a Python/FastAPI codebase.
+"""
+
+
+def generate_patch_draft(ticket_text: str, patch_plan: dict, repo_context: str) -> dict:
+    resp = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": PATCH_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"{ticket_text}\n\n"
+                    f"Approved patch plan:\n{json.dumps(patch_plan, indent=2)}\n\n"
+                    f"Repository context:\n{repo_context}"
+                ),
+            },
+        ],
+        extra_headers={
+            "X-TFY-METADATA": "{}",
+            "X-TFY-LOGGING-CONFIG": '{"enabled": true}',
+        },
+        temperature=0.2,
+    )
+
+    content = resp.choices[0].message.content or ""
+    parsed = _extract_json_object(content)
+
+    if not isinstance(parsed, dict) or "files" not in parsed:
+        raise ValueError("Invalid patch draft format")
+
+    return parsed
