@@ -1,0 +1,47 @@
+name: failsafe-foundry-guardrails
+type: gateway-guardrails-config
+
+rules:
+  - id: ff-llm-output-safety
+    when:
+      target:
+        operator: or
+        conditions:
+          model:
+            condition: in
+            values:
+              - bedrock/deepseek.v3.2
+      subjects:
+        operator: and
+        conditions:
+          in:
+            - team:everyone
+    llm_input_guardrails: []
+    llm_output_guardrails:
+      - failsafe/secrets-scan
+      - failsafe/linter
+    mcp_tool_pre_invoke_guardrails: []
+    mcp_tool_post_invoke_guardrails: []
+
+  - id: ff-mcp-tool-safety
+    when:
+      target:
+        operator: or
+        conditions:
+          mcpServers:
+            condition: in
+            values:
+              - failsafe-foundry
+      subjects:
+        operator: and
+        conditions:
+          in:
+            - team:everyone
+    llm_input_guardrails: []
+    llm_output_guardrails: []
+    mcp_tool_pre_invoke_guardrails:
+      - failsafe/secrets-scan
+    mcp_tool_post_invoke_guardrails:
+      - failsafe/secrets-scan
+
+
